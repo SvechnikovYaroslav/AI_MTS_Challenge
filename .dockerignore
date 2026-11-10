@@ -1,0 +1,41 @@
+# Конфиденциальные материалы организаторов
+Knowledge-base/
+Sample_submissions/
+МТС_кейс.pdf
+Технический регламент _ МТС.docx
+*.docx
+*.pdf
+
+demo_questions.csv
+demo_output.csv
+questions.csv
+knowledge-base.zip
+submission.csv
+submission.zip
+
+# Секреты и локальные данные
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker / логи
+*.log
+.DS_Store
+Thumbs.db
