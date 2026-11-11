@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .. import storage
+
 AI_MODE = os.environ.get("AI_MODE", "MOCK").upper()
 
 # Корень репозитория (родитель backend/) — там лежит ai_engine.py.
@@ -125,6 +127,40 @@ def _answer_mock(session_id: str, message: str, start: float) -> dict[str, Any]:
     )
 
 
+def _session_context(session_id: str, current_message: str) -> list[dict[str, str]]:
+    """История текущей сессии для AI Core.
+
+    - Читается из SQLite на сервере (не от клиента).
+    - Текущее сообщение пользователя уже сохранено в базе — оно
+      передаётся в question и в контекст НЕ дублируется.
+    - Только role/content: без id, токенов, session_id и служебных полей.
+    - Ограничение: последние 12 сообщений и ~6000 символов —
+      достаточно для контекста, не раздувает промпт.
+    """
+    try:
+        messages = storage.list_messages(session_id)
+    except Exception:  # noqa: BLE001 — контекст не критичен для ответа
+        return []
+
+    # Убираем хвостовое user-сообщение, совпадающее с текущим вопросом.
+    if messages and messages[-1]["role"] == "user" and messages[-1]["content"] == current_message:
+        messages = messages[:-1]
+
+    context: list[dict[str, str]] = []
+    total = 0
+    for m in reversed(messages[-12:]):
+        role = m.get("role")
+        content = str(m.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        if total + len(content) > 6000:
+            break
+        context.append({"role": role, "content": content})
+        total += len(content)
+    context.reverse()
+    return context
+
+
 def _answer_real(session_id: str, message: str, start: float) -> dict[str, Any]:
     try:
         import ai_engine
@@ -149,7 +185,7 @@ def _answer_real(session_id: str, message: str, start: float) -> dict[str, Any]:
         )
 
     try:
-        result = ai_engine.answer_question(message)
+        result = ai_engine.answer_question(message, session_context=_session_context(session_id, message))
     except NotImplementedError as exc:
         return _finish(session_id, f"AI Core не реализован: {exc}", [], start, ai_status="not_implemented", suggest=False)
     except Exception as exc:  # noqa: BLE001
