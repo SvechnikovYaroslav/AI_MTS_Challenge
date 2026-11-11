@@ -138,11 +138,53 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Git workflow
 
-- Основная ветка — `main`, работа через feature-ветки + PR.
+- **`develop` — основная ветка активной разработки команды.**
+- `main` — стабильные релизы.
+- Задачи разрабатываются в коротких feature-ветках **от `develop`**,
+  после тестов вливаются обратно в `develop`.
 - Коммиты на русском/английском, осмысленные сообщения.
 - **Никогда** не коммитить: `Knowledge-base/`, `Sample_submissions/`,
-  PDF/DOCX организаторов, `demo_*.csv`, `.env`, `*.db`, `submission.*`.
+  PDF/DOCX организаторов, `demo_*.csv`, `.env`, `*.db`, `submission.*`,
+  `data/` (диагностика БЗ).
 - Перед PR проверять `git status` и staged-файлы.
+
+### Ветки и baseline
+
+| Ветка/тег | Назначение |
+|---|---|
+| `develop` | актуальная разработка: web-app + AI Core + Retrieval V2 + RAG-исследования |
+| `main` | стабильные релизы |
+| `mts-score-0.4533` | annotated tag — версия с официальным баллом **0,4533** (коммит `4461e7e`, submission-hardening). Восстановимый baseline первого успешного конкурса. |
+
+> Retrieval V2 (стемминг + нормализация «сим-карт*» + TOP_K=8) входит в
+> `develop`, но **ещё не имеет нового официального score** — первый
+> сабмит с ним не выполнялся.
+
+### Быстрый старт для участника
+
+```bash
+git clone https://github.com/SvechnikovYaroslav/AI_MTS_Challenge.git
+cd AI_MTS_Challenge
+git checkout develop
+
+# backend (Python 3.11+)
+python -m venv backend/.venv
+backend/.venv/Scripts/pip install -r backend/requirements.txt   # Windows
+# backend/.venv/bin/pip install -r backend/requirements.txt     # Linux/macOS
+
+# frontend
+cd frontend && npm install && npm run dev
+
+# тесты
+backend/.venv/Scripts/python -m pytest tests/ -q   # ожидается 69 passed
+cd frontend && npm run build
+
+# backend локально (MOCK-режим)
+cd .. && AI_MODE=MOCK backend/.venv/Scripts/python -m uvicorn app.main:app --app-dir backend --port 8000
+```
+
+Переменные окружения — по `.env.example` (`AI_MODE`, `TOP_K`, `LLM_*`,
+`EXPOSE_LEADS` и др.).
 
 ## Изоляция конфиденциальных материалов
 
