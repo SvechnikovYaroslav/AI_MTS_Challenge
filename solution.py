@@ -8,13 +8,19 @@ submission.csv в рабочем каталоге с колонками `id,answ
 история между тестами не переносится (история внутри текста вопроса
 передаётся модели как есть — это часть входных данных).
 
-Поведение при сбоях:
-- корпус/индекс инициализируются один раз до обработки вопросов;
-- ошибка одного вопроса (сеть, таймаут, пустой ответ LLM) не роняет
-  прогон: в submission.csv пишется честное сообщение об ошибке,
-  счётчик failures печатается в stderr;
-- дублирующиеся id — предупреждение в stderr, обрабатываются все строки
-  (выходная строка на каждый входной ID, как требует регламент).
+Инициализация: корпус и BM25-индекс строятся ОДИН раз до запуска
+потоков — параллельные retrieve() не перечитывают базу.
+
+Устойчивость к сбоям:
+- ошибка одного вопроса (сеть, таймаут, пустой ответ LLM) не отменяет
+  остальные: в его строку пишется непустой честный fallback;
+- submission.csv формируется всегда при наличии вопросов — строго
+  колонки id,answer, по строке на каждый входной ID;
+- exit code: 0 — все ответы успешны; 1 — все запросы к модели
+  неуспешны (submission всё равно записан); 2 — нет questions.csv;
+  3 — база знаний недоступна. Частичные сбои -> exit 0, но failures
+  и типы ошибок печатаются в stderr.
+- API-ключи в логи не выводятся никогда.
 """
 
 from __future__ import annotations
@@ -22,6 +28,8 @@ from __future__ import annotations
 import csv
 import os
 import sys
+import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -29,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_engine  # noqa: E402
 import kb_loader  # noqa: E402
+import retrieval  # noqa: E402
 
 # Честный ответ при инфраструктурном сбое одного вопроса.
 # Это НЕ фиктивный «успешный» ответ — в stderr пишется ERROR,
@@ -75,23 +84,24 @@ def read_questions(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def _answer_one(question: str) -> str:
-    """Один независимый вопрос -> текст ответа (<=10000 символов)."""
+def _answer_one(question: str) -> tuple[str, str | None]:
+    """Один независимый вопрос -> (текст ответа, тип ошибки|None)."""
     try:
         result = ai_engine.answer_question(question, session_context=None)
         answer = str(result.get("answer", "")).strip()
     except Exception as exc:  # noqa: BLE001 — изолируем сбой одного вопроса
         print(f"ERROR question failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return ERROR_ANSWER
+        return ERROR_ANSWER, type(exc).__name__
     if not answer:
-        return ERROR_ANSWER
+        return ERROR_ANSWER, "EmptyAnswer"
     # Жёсткий лимит регламента — обрезка по границе слова.
     if len(answer) > 10_000:
         answer = answer[: 9_999].rsplit(" ", 1)[0] + "…"
-    return answer
+    return answer, None
 
 
 def main() -> int:
+    started = time.perf_counter()
     qpath = questions_csv_path()
     if not qpath.exists():
         print(
@@ -103,18 +113,19 @@ def main() -> int:
     questions = read_questions(qpath)
     print(f"Loaded {len(questions)} questions from {qpath}")
 
-    # Однократная инициализация корпуса и поискового индекса.
-    # При отсутствии БЗ фиксируем ошибку и выходим: сабмит без базы
-    # знаний был бы фиктивным «успехом».
+    # Однократная инициализация корпуса И индекса: retrieve() в потоках
+    # использует уже построенный индекс и не перечитывает ZIP.
     try:
         corpus = kb_loader.load_corpus()
-        print(f"Corpus ready: {len(corpus)} chunks")
+        retrieval.build_index(corpus)
+        print(f"Corpus ready: {len(corpus)} chunks, BM25 index built")
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: knowledge base unavailable: {exc}", file=sys.stderr)
         return 3
 
     out_path = submission_csv_path()
     answers: list[str] = [ERROR_ANSWER] * len(questions)
+    error_kinds: Counter[str] = Counter()
     failures = 0
 
     workers = _env_int("MAX_WORKERS", 3, 1, 8)
@@ -130,13 +141,14 @@ def main() -> int:
             for fut in as_completed(futures):
                 i = futures[fut]
                 try:
-                    answers[i] = fut.result()
+                    answers[i], err = fut.result()
                 except Exception as exc:  # noqa: BLE001 — страховка
                     print(f"ERROR id={questions[i]['id']}: {exc}", file=sys.stderr)
-                    answers[i] = ERROR_ANSWER
-                done += 1
-                if answers[i] == ERROR_ANSWER:
+                    answers[i], err = ERROR_ANSWER, type(exc).__name__
+                if err is not None:
                     failures += 1
+                    error_kinds[err] += 1
+                done += 1
                 if done % 10 == 0 or done == len(questions):
                     print(f"[{done}/{len(questions)}] processed", flush=True)
 
@@ -148,12 +160,21 @@ def main() -> int:
         for item, answer in zip(questions, answers):
             writer.writerow([item["id"], answer])
 
+    elapsed = time.perf_counter() - started
+    total = len(questions)
+    ok = total - failures
     print(
-        f"Wrote {len(questions)} answers to {out_path} "
-        f"(failures={failures}, workers={workers})",
-        file=sys.stderr if failures else sys.stdout,
+        f"STATS total={total} ok={ok} failures={failures} "
+        f"error_kinds={dict(error_kinds)} elapsed={elapsed:.1f}s "
+        f"workers={workers} -> {out_path}",
+        file=sys.stderr,
     )
-    return 0 if failures == 0 else 1
+
+    if total and failures == total:
+        # Модель не ответила ни на один запрос — это не «успешный» сабмит.
+        print("ERROR: все запросы к модели завершились ошибкой", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

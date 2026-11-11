@@ -109,7 +109,10 @@ def _post_chat(messages: list[dict[str, str]], settings: dict[str, Any]) -> str:
                 raise _RetryableHTTP(resp.status_code)
             if resp.status_code >= 400:
                 raise AICoreError(f"LLM HTTP {resp.status_code}: {resp.text[:300]}")
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise AICoreError(f"LLM вернул невалидный JSON: {exc}") from exc
             content = data["choices"][0]["message"].get("content") or ""
             if not isinstance(content, str) or not content.strip():
                 raise AICoreError("LLM вернула пустой ответ")
@@ -176,6 +179,31 @@ def _clean_answer(text: str) -> str:
     return answer
 
 
+def _retrieval_query(question: str, session_context: list[dict[str, Any]] | None) -> str:
+    """Поисковый запрос для BM25.
+
+    - Конкурсные тесты (session_context=None) используют вопрос как есть —
+      включая историю, уже встроенную в текст вопроса.
+    - Follow-up в диалоге («А сколько это стоит?») без темы бесполезен:
+      добавляем ПРЕДЫДУЩЕЕ user-сообщение из контекста (до 400 символов),
+      чтобы retrieval нашёл фрагменты нужного продукта.
+    - Длинную историю целиком в BM25 не отправляем — только последнее
+      сообщение клиента, это сохраняет сигнал без шума.
+    """
+    q = question.strip()
+    if not session_context or len(q) > 200:
+        return q
+    prev_users = [
+        " ".join(str(m.get("content") or "").split())
+        for m in session_context
+        if m.get("role") == "user" and str(m.get("content") or "").strip()
+    ]
+    if not prev_users:
+        return q
+    prev = prev_users[-1][:400]
+    return f"{q} {prev}"
+
+
 def answer_question(
     question: str,
     session_context: list[dict[str, Any]] | None = None,
@@ -200,7 +228,7 @@ def answer_question(
     if not question:
         raise AICoreError("Пустой вопрос")
 
-    chunks = retrieval.retrieve(question)
+    chunks = retrieval.retrieve(_retrieval_query(question, session_context))
     sources = [
         {
             "file": c.get("file", ""),

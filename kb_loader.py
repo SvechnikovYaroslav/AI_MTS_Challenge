@@ -170,6 +170,10 @@ def chunk_markdown(name: str, text: str) -> list[dict[str, Any]]:
         cur_text_parts, cur_section, cur_len = [], "", 0
 
     for section, lines in sections:
+        # Граница раздела = граница чанка: нельзя смешивать разные
+        # смысловые разделы в одном чанке с чужой меткой section.
+        if cur_text_parts and cur_section != section:
+            flush()
         # Абзацы = группы непустых строк.
         paragraphs: list[str] = []
         para: list[str] = []
@@ -195,14 +199,22 @@ def chunk_markdown(name: str, text: str) -> list[dict[str, Any]]:
 
     flush()
 
-    # Слить слишком короткий последний чанк с предыдущим (тот же файл).
-    if len(chunks) >= 2 and len(chunks[-1]["text"]) < MIN_CHUNK_CHARS:
-        prev, last = chunks[-2], chunks[-1]
-        merged = prev["text"] + "\n\n" + last["text"]
-        if len(merged) <= max_chars * 2:
-            prev["text"] = merged
-            prev["section"] = prev["section"] or last["section"]
-            chunks.pop()
+    # Слить слишком короткие чанки с соседом внутри того же файла,
+    # чтобы не было мусорных фрагментов с бесполезными метаданными.
+    merged: list[dict[str, Any]] = []
+    for c in chunks:
+        if (
+            merged
+            and len(c["text"]) < MIN_CHUNK_CHARS
+            and merged[-1]["file"] == c["file"]
+            and merged[-1]["section"] == c["section"]
+            and len(merged[-1]["text"]) + len(c["text"]) + 2 <= max_chars * 2
+        ):
+            merged[-1]["text"] += "\n\n" + c["text"]
+            merged[-1]["section"] = merged[-1]["section"] or c["section"]
+        else:
+            merged.append(c)
+    chunks = merged
 
     # Стабильные ID: файл + порядковый номер чанка.
     for i, c in enumerate(chunks):
