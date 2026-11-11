@@ -25,6 +25,12 @@ def normalize_ru_phone(raw: str) -> str:
     return "+7" + subscriber
 
 
+class SessionCreate(BaseModel):
+    """Тело POST /api/sessions (все поля опциональны)."""
+
+    visitor_id: str | None = Field(default=None, max_length=64)
+
+
 class SessionOut(BaseModel):
     id: str
     title: str

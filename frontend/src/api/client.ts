@@ -1,6 +1,18 @@
 import type { ChatResponse, Lead, Message, Session } from '../types';
 
 const BASE = '/api';
+const VISITOR_KEY = 'mts-visitor-id';
+
+// Анонимный идентификатор браузера: backend по нему отдаёт только
+// собственную историю диалогов. Не является аутентификацией.
+function getVisitorId(): string {
+  let v = localStorage.getItem(VISITOR_KEY);
+  if (!v) {
+    v = crypto.randomUUID();
+    localStorage.setItem(VISITOR_KEY, v);
+  }
+  return v;
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`${BASE}${path}`, {
@@ -28,8 +40,13 @@ function withToken(path: string, token?: string): string {
 
 export const api = {
   health: () => request<{ status: string; ai_mode: string; ai_status: string }>('GET', '/health'),
-  createSession: () => request<Session>('POST', '/sessions'),
-  listSessions: () => request<{ sessions: Session[] }>('GET', '/sessions'),
+  createSession: () =>
+    request<Session>('POST', '/sessions', { visitor_id: getVisitorId() }),
+  listSessions: () =>
+    request<{ sessions: Session[] }>(
+      'GET',
+      `/sessions?visitor_id=${encodeURIComponent(getVisitorId())}`,
+    ),
   getMessages: (sessionId: string, token?: string) =>
     request<{ session_id: string; messages: Message[] }>(
       'GET',

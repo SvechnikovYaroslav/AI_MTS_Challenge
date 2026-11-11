@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from .. import storage
-from ..schemas import MessagesPage, SessionCreated
+from ..schemas import MessagesPage, SessionCreate, SessionCreated
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
@@ -16,14 +16,16 @@ def _check_token(session_id: str, token: str | None) -> None:
 
 
 @router.post("/sessions", response_model=SessionCreated, status_code=201)
-def create_session() -> dict:
-    return storage.create_session()
+def create_session(payload: SessionCreate | None = Body(default=None)) -> dict:
+    visitor_id = payload.visitor_id if payload else None
+    return storage.create_session(visitor_id=visitor_id)
 
 
 @router.get("/sessions", response_model=dict)
-def list_sessions() -> dict:
-    # Токены сессий в список не попадают — см. SessionOut без поля token.
-    return {"sessions": storage.list_sessions()}
+def list_sessions(visitor_id: str | None = Query(default=None)) -> dict:
+    # История изолирована по visitor_id: без него список пуст,
+    # токены сессий в ответ не попадают — см. SessionOut.
+    return {"sessions": storage.list_sessions(visitor_id)}
 
 
 @router.get("/sessions/{session_id}/messages", response_model=MessagesPage)

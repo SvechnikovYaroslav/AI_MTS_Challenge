@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    token TEXT
+    token TEXT,
+    visitor_id TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +72,7 @@ def init_db() -> None:
     with _lock, _connect() as conn:
         conn.executescript(SCHEMA)
         _ensure_column(conn, "sessions", "token", "TEXT")
+        _ensure_column(conn, "sessions", "visitor_id", "TEXT")
         _ensure_column(conn, "leads", "summary", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "leads", "conversation_snapshot", "TEXT NOT NULL DEFAULT '[]'")
         # Бэкфилл токенов для сессий, созданных до введения токенов.
@@ -84,27 +86,36 @@ def _now() -> str:
 
 # ---------- sessions ----------
 
-def create_session(title: str = "Новый диалог") -> dict[str, Any]:
+def create_session(title: str = "Новый диалог", visitor_id: str | None = None) -> dict[str, Any]:
     sid = str(uuid.uuid4())
     token = uuid.uuid4().hex
     now = _now()
     with _lock, _connect() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, title, created_at, token) VALUES (?,?,?,?)",
-            (sid, title, now, token),
+            "INSERT INTO sessions (id, title, created_at, token, visitor_id) VALUES (?,?,?,?,?)",
+            (sid, title, now, token, visitor_id or None),
         )
     return {"id": sid, "title": title, "created_at": now, "token": token}
 
 
-def list_sessions() -> list[dict[str, Any]]:
+def list_sessions(visitor_id: str | None = None) -> list[dict[str, Any]]:
+    """Список сессий только одного посетителя.
+
+    Без visitor_id возвращаем пустой список: глобальная история
+    (названия чужих диалогов) не должна быть доступна всем.
+    """
+    if not visitor_id:
+        return []
     with _lock, _connect() as conn:
         rows = conn.execute(
             """SELECT s.id, s.title, s.created_at,
                       COUNT(m.id) AS message_count
                FROM sessions s
                LEFT JOIN messages m ON m.session_id = s.id
+               WHERE s.visitor_id = ?
                GROUP BY s.id
-               ORDER BY s.created_at DESC"""
+               ORDER BY s.created_at DESC""",
+            (visitor_id,),
         ).fetchall()
     return [dict(r) for r in rows]
 

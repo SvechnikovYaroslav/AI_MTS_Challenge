@@ -47,7 +47,7 @@ def main() -> int:
     code, body = request("GET", f"{base}/api/health")
     results.append(check("GET /api/health", code == 200 and body.get("status") == "ok", f"HTTP {code}"))
 
-    code, body = request("POST", f"{base}/api/sessions", {})
+    code, body = request("POST", f"{base}/api/sessions", {"visitor_id": "smoke-test"})
     session_id = body.get("id", "")
     token = body.get("token", "")
     results.append(

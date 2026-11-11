@@ -29,8 +29,8 @@ def client():
         yield c
 
 
-def create_session(client) -> tuple[str, str]:
-    r = client.post("/api/sessions")
+def create_session(client, visitor_id: str = "v-test") -> tuple[str, str]:
+    r = client.post("/api/sessions", json={"visitor_id": visitor_id})
     assert r.status_code == 201
     body = r.json()
     return body["id"], body["token"]
@@ -78,12 +78,12 @@ def test_session_and_chat_flow(client):
 
 
 def test_sessions_history_preserved(client):
-    r1 = client.post("/api/sessions").json()
-    r2 = client.post("/api/sessions").json()
+    r1 = client.post("/api/sessions", json={"visitor_id": "v-history"}).json()
+    r2 = client.post("/api/sessions", json={"visitor_id": "v-history"}).json()
     assert r1["id"] != r2["id"]
     chat(client, r1["id"], r1["token"], "hi")
 
-    sessions = client.get("/api/sessions").json()["sessions"]
+    sessions = client.get("/api/sessions", params={"visitor_id": "v-history"}).json()["sessions"]
     ids = {s["id"] for s in sessions}
     assert {r1["id"], r2["id"]} <= ids
     # Токены не утекают в список сессий
@@ -146,13 +146,29 @@ def test_session_title_from_first_message(client):
     sid, token = create_session(client)
     chat(client, sid, token, STARTER_QUESTIONS[1])
 
-    sessions = client.get("/api/sessions").json()["sessions"]
+    sessions = client.get("/api/sessions", params={"visitor_id": "v-test"}).json()["sessions"]
     title = next(s["title"] for s in sessions if s["id"] == sid)
     assert title != "Новый диалог"
     assert "магазин" in title.lower()
 
-    sessions2 = client.get("/api/sessions").json()["sessions"]
+    sessions2 = client.get("/api/sessions", params={"visitor_id": "v-test"}).json()["sessions"]
     assert next(s["title"] for s in sessions2 if s["id"] == sid) == title
+
+
+def test_sessions_list_isolated_by_visitor(client):
+    # Посетитель видит только свои диалоги; без visitor_id список пуст.
+    sa, _ = create_session(client, "v-alice")
+    sb, _ = create_session(client, "v-bob")
+
+    alice = client.get("/api/sessions", params={"visitor_id": "v-alice"}).json()["sessions"]
+    bob = client.get("/api/sessions", params={"visitor_id": "v-bob"}).json()["sessions"]
+    assert sa in {s["id"] for s in alice}
+    assert sb in {s["id"] for s in bob}
+    assert sa not in {s["id"] for s in bob}
+    assert sb not in {s["id"] for s in alice}
+
+    assert client.get("/api/sessions").json()["sessions"] == []
+    assert client.get("/api/sessions", params={"visitor_id": "nobody"}).json()["sessions"] == []
 
 
 # --- Заявки: контекст, резюме, снимок ---
@@ -258,7 +274,7 @@ def test_delete_session_removes_messages_keeps_lead(client):
     assert r.status_code == 204
 
     assert client.get(f"/api/sessions/{sid}/messages", params={"token": token}).status_code == 404
-    ids = {s["id"] for s in client.get("/api/sessions").json()["sessions"]}
+    ids = {s["id"] for s in client.get("/api/sessions", params={"visitor_id": "v-test"}).json()["sessions"]}
     assert sid not in ids
 
     # Заявка и её контекст сохраняются после удаления диалога
@@ -330,6 +346,7 @@ def test_migration_old_schema(tmp_path, monkeypatch):
     lead_cols = {r["name"] for r in conn.execute("PRAGMA table_info(leads)")}
     conn.close()
     assert "token" in session_cols
+    assert "visitor_id" in session_cols
     assert {"summary", "conversation_snapshot"} <= lead_cols
 
     leads = storage.list_leads()
