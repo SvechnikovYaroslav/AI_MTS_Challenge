@@ -6,6 +6,9 @@ interface Props {
   onClose: () => void;
 }
 
+const inputClass =
+  'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-mts-red';
+
 export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -33,9 +36,10 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
 
   if (status === 'done') {
     return (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-        Заявка отправлена! Менеджер свяжется с вами.
-        <button onClick={onClose} className="mt-2 block text-green-700 underline">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-800">
+        <div className="font-semibold">Заявка отправлена</div>
+        <p className="mt-1">Менеджер свяжется с вами для обсуждения проекта.</p>
+        <button onClick={onClose} className="mt-3 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">
           Закрыть
         </button>
       </div>
@@ -43,40 +47,67 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4">
-      <div className="text-sm font-semibold text-slate-800">Заявка менеджеру</div>
-      <input
-        required
-        minLength={2}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="ФИО"
-        className="rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-blue-500"
-      />
-      <input
-        required
-        minLength={5}
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        placeholder="Телефон"
-        className="rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-blue-500"
-      />
-      <input
-        value={company}
-        onChange={(e) => setCompany(e.target.value)}
-        placeholder="Компания"
-        className="rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-blue-500"
-      />
-      {status === 'error' && <div className="text-xs text-red-600">{error}</div>}
-      <div className="flex gap-2">
+    <form onSubmit={submit} className="flex flex-col gap-3">
+      <div>
+        <div className="text-base font-semibold text-slate-900">Обсудить проект со специалистом</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Оставьте контакты — менеджер МТС EnergyTool свяжется с вами.
+        </p>
+      </div>
+
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+        ФИО
+        <input
+          required
+          minLength={2}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Иван Иванов"
+          className={inputClass}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+        Телефон
+        <input
+          required
+          minLength={5}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+7 900 000-00-00"
+          className={inputClass}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+        Компания
+        <input
+          value={company}
+          onChange={(e) => setCompany(e.target.value)}
+          placeholder="ООО «Компания»"
+          className={inputClass}
+        />
+      </label>
+
+      {status === 'error' && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}. Попробуйте ещё раз.
+        </div>
+      )}
+
+      <div className="flex gap-2 pt-1">
         <button
           type="submit"
           disabled={status === 'sending'}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          className="flex-1 rounded-lg bg-mts-red px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-mts-dark disabled:opacity-50"
         >
           {status === 'sending' ? 'Отправка...' : 'Отправить заявку'}
         </button>
-        <button type="button" onClick={onClose} className="rounded px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200"
+        >
           Отмена
         </button>
       </div>

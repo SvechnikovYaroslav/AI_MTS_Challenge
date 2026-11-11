@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 
 interface Props {
   onSend: (text: string) => void;
@@ -7,31 +7,62 @@ interface Props {
 
 export function ChatInput({ onSend, disabled }: Props) {
   const [text, setText] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const submit = () => {
     const value = text.trim();
     if (!value || disabled) return;
     onSend(value);
     setText('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  const onChange = (value: string) => {
+    setText(value);
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }
   };
 
   return (
-    <form onSubmit={submit} className="flex gap-2 border-t border-slate-200 p-3">
-      <input
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+      className="flex items-end gap-2 border-t border-slate-200 bg-white p-3"
+    >
+      <textarea
+        ref={textareaRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
         placeholder="Опишите проблему с энергопотреблением..."
         maxLength={4000}
         disabled={disabled}
-        className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-slate-100"
+        rows={1}
+        className="max-h-40 flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition-colors focus:border-mts-red disabled:bg-slate-50"
       />
       <button
         type="submit"
         disabled={disabled || !text.trim()}
-        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-mts-red text-white transition-colors hover:bg-mts-dark disabled:opacity-50"
+        aria-label="Отправить"
       >
-        Отправить
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+        </svg>
       </button>
     </form>
   );
