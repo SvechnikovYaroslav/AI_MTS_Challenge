@@ -136,7 +136,7 @@ export function MessageBubble({ message, showDebug }: Props) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`group max-w-[85%] rounded-2xl px-4 py-3 shadow-sm sm:max-w-[75%] ${
+        className={`group w-fit max-w-[85%] break-words rounded-2xl px-4 py-3 shadow-sm sm:max-w-[75%] ${
           isUser
             ? 'rounded-br-sm bg-mts-red text-white'
             : 'rounded-bl-sm border border-slate-200 bg-white text-slate-800'

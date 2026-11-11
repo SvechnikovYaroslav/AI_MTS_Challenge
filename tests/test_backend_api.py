@@ -37,7 +37,13 @@ def test_session_and_chat_flow(client):
     assert r.status_code == 201
     sid = r.json()["id"]
 
-    r = client.post("/api/chat", json={"session_id": sid, "message": "Тестовое сообщение"})
+    r = client.post(
+        "/api/chat",
+        json={
+            "session_id": sid,
+            "message": "У нас несколько магазинов. Можно контролировать их потребление в одном кабинете?",
+        },
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["answer"]
@@ -82,3 +88,60 @@ def test_lead_flow(client):
 
     leads = client.get("/api/leads").json()["leads"]
     assert any(l["name"] == "Тест Тестов" for l in leads)
+
+
+# --- MOCK-режим: четыре стартовых сценария ---
+
+STARTER_QUESTIONS = [
+    "Расходы предприятия на электричество выросли. Что можно сделать?",
+    "У нас несколько магазинов. Можно контролировать их потребление в одном кабинете?",
+    "Хотим установить солнечные панели на складе. С чего начать?",
+    "Наша электросетевая компания хочет эффективнее выявлять подозрительные точки учёта.",
+]
+
+
+def test_mock_starter_scenarios(client):
+    sid = client.post("/api/sessions").json()["id"]
+    answers = []
+    for q in STARTER_QUESTIONS:
+        r = client.post("/api/chat", json={"session_id": sid, "message": q})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ai_status"] == "mock"
+        assert body["sources"], f"empty sources for {q!r}"
+        assert all(s.get("mock") is True for s in body["sources"])
+        answers.append(body["answer"])
+
+    # Четыре разных ответа, каждый по своей теме
+    assert len(set(answers)) == 4
+    assert "ценов" in answers[0].lower()          # затраты: счёт, ценовая категория
+    assert "кабинет" in answers[1].lower()       # учёт: один кабинет
+    assert "сетев" in answers[2].lower() or "гибридн" in answers[2].lower()  # СЭС
+    assert "приоритиз" in answers[3].lower() and "хищен" in answers[3].lower()  # потери
+
+
+def test_mock_neutral_answer(client):
+    sid = client.post("/api/sessions").json()["id"]
+    r = client.post("/api/chat", json={"session_id": sid, "message": "Какая сегодня погода?"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ai_status"] == "mock"
+    assert "демонстрацион" in body["answer"].lower() or "MOCK" in body["answer"]
+    assert body["sources"] == []
+
+
+def test_session_title_from_first_message(client):
+    sid = client.post("/api/sessions").json()["id"]
+    client.post(
+        "/api/chat",
+        json={"session_id": sid, "message": STARTER_QUESTIONS[1]},
+    )
+
+    sessions = client.get("/api/sessions").json()["sessions"]
+    title = next(s["title"] for s in sessions if s["id"] == sid)
+    assert title != "Новый диалог"
+    assert "магазин" in title.lower()
+
+    # Название сохраняется после «перезагрузки» (повторный запрос списка)
+    sessions2 = client.get("/api/sessions").json()["sessions"]
+    assert next(s["title"] for s in sessions2 if s["id"] == sid) == title

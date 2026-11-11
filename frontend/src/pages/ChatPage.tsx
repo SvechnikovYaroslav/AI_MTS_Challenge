@@ -93,7 +93,7 @@ export function ChatPage() {
         setBackendOnline(true);
       })
       .catch(() => {
-        setAiMode('backend offline');
+        setAiMode('');
         setBackendOnline(false);
       });
     loadSessions();
@@ -221,10 +221,12 @@ export function ChatPage() {
   );
 
   const showWelcome = !messagesLoading && messages.length === 0 && !sending;
+  const dialogTitle = sessions.find((s) => s.id === activeId)?.title ?? 'Новый диалог';
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
       <Header
+        dialogTitle={dialogTitle}
         aiMode={aiMode}
         backendOnline={backendOnline}
         showDebug={showDebug}
@@ -292,8 +294,10 @@ export function ChatPage() {
             )}
           </div>
 
-          <div className="mx-auto w-full max-w-3xl">
-            <ChatInput onSend={send} disabled={sending} />
+          <div className="shrink-0 border-t border-slate-200 bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 sm:px-6">
+            <div className="mx-auto w-full max-w-3xl">
+              <ChatInput onSend={send} disabled={sending} />
+            </div>
           </div>
         </main>
       </div>

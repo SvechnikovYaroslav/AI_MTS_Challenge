@@ -92,6 +92,14 @@ def session_exists(session_id: str) -> bool:
 
 # ---------- messages ----------
 
+def _derive_title(text: str) -> str:
+    """Короткое название диалога из первого вопроса пользователя."""
+    flat = " ".join(text.split())
+    if len(flat) > 60:
+        flat = flat[:57].rstrip() + "…"
+    return flat or "Новый диалог"
+
+
 def add_message(
     session_id: str,
     role: str,
@@ -103,6 +111,9 @@ def add_message(
     import json
 
     with _lock, _connect() as conn:
+        prev_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM messages WHERE session_id=?", (session_id,)
+        ).fetchone()["c"]
         cur = conn.execute(
             """INSERT INTO messages
                (session_id, role, content, sources_json, latency_ms, ai_status, created_at)
@@ -117,6 +128,11 @@ def add_message(
                 _now(),
             ),
         )
+        if role == "user" and prev_count == 0:
+            conn.execute(
+                "UPDATE sessions SET title=? WHERE id=?",
+                (_derive_title(content), session_id),
+            )
         return int(cur.lastrowid)
 
 
