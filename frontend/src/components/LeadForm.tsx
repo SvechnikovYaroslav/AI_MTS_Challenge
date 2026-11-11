@@ -9,6 +9,29 @@ interface Props {
 const inputClass =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-colors focus:border-mts-red';
 
+// Российский формат: +7 (XXX) XXX-XX-XX.
+// Пользователь может вводить номер без кода страны: 953... -> +7 (953) ...
+function formatRuPhone(input: string): string {
+  let d = input.replace(/\D/g, '');
+  if (d.startsWith('8') && d.length === 11) d = '7' + d.slice(1);
+  if (d.startsWith('7')) d = d.slice(1);
+  d = d.slice(0, 10);
+  if (!d) return '';
+
+  const parts = [d.slice(0, 3), d.slice(3, 6), d.slice(6, 8), d.slice(8, 10)];
+  let out = '+7';
+  if (parts[0]) out += ` (${parts[0]}`;
+  if (d.length >= 3) out += ')';
+  if (parts[1]) out += ` ${parts[1]}`;
+  if (parts[2]) out += `-${parts[2]}`;
+  if (parts[3]) out += `-${parts[3]}`;
+  return out;
+}
+
+function phoneDigits(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
 export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -18,6 +41,11 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (phoneDigits(phone).length !== 11) {
+      setStatus('error');
+      setError('Введите номер полностью: +7 и 10 цифр');
+      return;
+    }
     setStatus('sending');
     setError('');
     try {
@@ -71,10 +99,11 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
         Телефон
         <input
           required
-          minLength={5}
           value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="+7 900 000-00-00"
+          onChange={(e) => setPhone(formatRuPhone(e.target.value))}
+          placeholder="+7 (900) 000-00-00"
+          inputMode="tel"
+          autoComplete="tel"
           className={inputClass}
         />
       </label>
