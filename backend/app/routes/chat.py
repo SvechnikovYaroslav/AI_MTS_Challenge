@@ -20,6 +20,8 @@ def chat(req: ChatRequest) -> dict:
         raise HTTPException(status_code=400, detail="Message too long (max 4000 chars)")
     if not storage.session_exists(req.session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    if not storage.verify_session_token(req.session_id, req.session_token):
+        raise HTTPException(status_code=403, detail="Invalid or missing session token")
 
     storage.add_message(req.session_id, "user", message)
 

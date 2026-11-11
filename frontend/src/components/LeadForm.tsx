@@ -1,7 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 
 interface Props {
   sessionId: string | null;
+  preview: string;
+  hasDialog: boolean;
   onSubmit: (lead: { name: string; phone: string; company: string; session_id?: string }) => Promise<void>;
   onClose: () => void;
 }
@@ -32,20 +34,29 @@ function phoneDigits(phone: string): string {
   return phone.replace(/\D/g, '');
 }
 
-export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
+export function LeadForm({ sessionId, preview, hasDialog, onSubmit, onClose }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [company, setCompany] = useState('');
+  const [consent, setConsent] = useState(false);
   const [status, setStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [error, setError] = useState('');
+  const sendingRef = useRef(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (sendingRef.current) return;
     if (phoneDigits(phone).length !== 11) {
       setStatus('error');
       setError('Введите номер полностью: +7 и 10 цифр');
       return;
     }
+    if (!consent) {
+      setStatus('error');
+      setError('Подтвердите согласие на передачу контактных данных');
+      return;
+    }
+    sendingRef.current = true;
     setStatus('sending');
     setError('');
     try {
@@ -59,6 +70,8 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
     } catch (err) {
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Ошибка отправки');
+    } finally {
+      sendingRef.current = false;
     }
   };
 
@@ -118,6 +131,31 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
         />
       </label>
 
+      <div className="rounded-lg bg-slate-50 p-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Что получит специалист
+        </div>
+        <p className="mt-1 text-sm leading-snug text-slate-700">{preview}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          {hasDialog
+            ? 'К заявке будет приложен контекст текущей консультации.'
+            : 'Диалог пуст — контекст консультации не будет приложен.'}
+        </p>
+      </div>
+
+      <label className="flex items-start gap-2 text-xs leading-snug text-slate-600">
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(e) => setConsent(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-mts-red"
+        />
+        <span>
+          Согласен на передачу указанных контактных данных для связи по моей заявке.
+          <span className="text-slate-400"> (демо-режим, не является юридическим согласием МТС)</span>
+        </span>
+      </label>
+
       {status === 'error' && (
         <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
           {error}. Попробуйте ещё раз.
@@ -127,7 +165,7 @@ export function LeadForm({ sessionId, onSubmit, onClose }: Props) {
       <div className="flex gap-2 pt-1">
         <button
           type="submit"
-          disabled={status === 'sending'}
+          disabled={status === 'sending' || !consent}
           className="flex-1 rounded-lg bg-mts-red px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-mts-dark disabled:opacity-50"
         >
           {status === 'sending' ? 'Отправка...' : 'Отправить заявку'}

@@ -12,6 +12,8 @@ export interface Session {
   title: string;
   created_at: string;
   message_count?: number;
+  /** Секретный токен сессии — возвращается только при создании. */
+  token?: string;
 }
 
 export interface Message {
@@ -33,11 +35,18 @@ export interface ChatResponse {
   ai_status: string;
 }
 
+export interface SnapshotMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface Lead {
   id: number;
   name: string;
   phone: string;
   company: string;
   session_id: string | null;
+  summary?: string;
+  conversation_snapshot?: SnapshotMessage[];
   created_at: string;
 }

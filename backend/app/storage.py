@@ -6,7 +6,9 @@ check_same_thread=False + lock — достаточно для демо-нагр
 
 from __future__ import annotations
 
+import json
 import os
+import secrets
 import sqlite3
 import threading
 import uuid
@@ -21,7 +23,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    token TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +43,8 @@ CREATE TABLE IF NOT EXISTS leads (
     phone TEXT NOT NULL,
     company TEXT NOT NULL DEFAULT '',
     session_id TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    conversation_snapshot TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL
 );
 """
@@ -52,9 +57,25 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, name: str, ddl: str) -> None:
+    """Лёгкая миграция: добавить колонку, если её нет (данные сохраняются)."""
+    if name not in _columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
 def init_db() -> None:
     with _lock, _connect() as conn:
         conn.executescript(SCHEMA)
+        _ensure_column(conn, "sessions", "token", "TEXT")
+        _ensure_column(conn, "leads", "summary", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "leads", "conversation_snapshot", "TEXT NOT NULL DEFAULT '[]'")
+        # Бэкфилл токенов для сессий, созданных до введения токенов.
+        for row in conn.execute("SELECT id FROM sessions WHERE token IS NULL").fetchall():
+            conn.execute("UPDATE sessions SET token=? WHERE id=?", (uuid.uuid4().hex, row["id"]))
 
 
 def _now() -> str:
@@ -65,10 +86,14 @@ def _now() -> str:
 
 def create_session(title: str = "Новый диалог") -> dict[str, Any]:
     sid = str(uuid.uuid4())
+    token = uuid.uuid4().hex
     now = _now()
     with _lock, _connect() as conn:
-        conn.execute("INSERT INTO sessions (id, title, created_at) VALUES (?,?,?)", (sid, title, now))
-    return {"id": sid, "title": title, "created_at": now}
+        conn.execute(
+            "INSERT INTO sessions (id, title, created_at, token) VALUES (?,?,?,?)",
+            (sid, title, now, token),
+        )
+    return {"id": sid, "title": title, "created_at": now, "token": token}
 
 
 def list_sessions() -> list[dict[str, Any]]:
@@ -88,6 +113,18 @@ def session_exists(session_id: str) -> bool:
     with _lock, _connect() as conn:
         row = conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
     return row is not None
+
+
+def verify_session_token(session_id: str, token: str | None) -> bool:
+    """Проверка владения сессией по секретному токену, выданному при создании.
+
+    session_id сам по себе не является доказательством владения.
+    """
+    if not token:
+        return False
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT token FROM sessions WHERE id=?", (session_id,)).fetchone()
+    return bool(row and row["token"] and secrets.compare_digest(row["token"], token))
 
 
 def delete_session(session_id: str) -> bool:
@@ -123,8 +160,6 @@ def add_message(
     latency_ms: int | None = None,
     ai_status: str | None = None,
 ) -> int:
-    import json
-
     with _lock, _connect() as conn:
         prev_count = conn.execute(
             "SELECT COUNT(*) AS c FROM messages WHERE session_id=?", (session_id,)
@@ -152,8 +187,6 @@ def add_message(
 
 
 def list_messages(session_id: str) -> list[dict[str, Any]]:
-    import json
-
     with _lock, _connect() as conn:
         rows = conn.execute(
             """SELECT id, role, content, sources_json, latency_ms, ai_status, created_at
@@ -170,12 +203,35 @@ def list_messages(session_id: str) -> list[dict[str, Any]]:
 
 # ---------- leads ----------
 
-def add_lead(name: str, phone: str, company: str, session_id: str | None) -> dict[str, Any]:
+def add_lead(
+    name: str,
+    phone: str,
+    company: str,
+    session_id: str | None,
+    summary: str = "",
+    conversation_snapshot: str = "[]",
+) -> dict[str, Any]:
+    """Атомарно сохранить заявку вместе с резюме и снимком переписки.
+
+    summary и conversation_snapshot формируются сервером из SQLite,
+    а не передаются клиентом.
+    """
     now = _now()
+    snapshot_obj = json.loads(conversation_snapshot) if conversation_snapshot else []
     with _lock, _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO leads (name, phone, company, session_id, created_at) VALUES (?,?,?,?,?)",
-            (name.strip(), phone.strip(), company.strip(), session_id, now),
+            """INSERT INTO leads
+               (name, phone, company, session_id, summary, conversation_snapshot, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                name.strip(),
+                phone.strip(),
+                company.strip(),
+                session_id,
+                summary,
+                conversation_snapshot or "[]",
+                now,
+            ),
         )
         lead_id = int(cur.lastrowid)
     return {
@@ -184,6 +240,8 @@ def add_lead(name: str, phone: str, company: str, session_id: str | None) -> dic
         "phone": phone.strip(),
         "company": company.strip(),
         "session_id": session_id,
+        "summary": summary,
+        "conversation_snapshot": snapshot_obj,
         "created_at": now,
     }
 
@@ -191,4 +249,13 @@ def add_lead(name: str, phone: str, company: str, session_id: str | None) -> dic
 def list_leads() -> list[dict[str, Any]]:
     with _lock, _connect() as conn:
         rows = conn.execute("SELECT * FROM leads ORDER BY id DESC").fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["conversation_snapshot"] = json.loads(d.get("conversation_snapshot") or "[]")
+        except (TypeError, ValueError):
+            d["conversation_snapshot"] = []
+        d["summary"] = d.get("summary") or ""
+        out.append(d)
+    return out

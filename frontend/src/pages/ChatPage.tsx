@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { ChatInput } from '../components/ChatInput';
 import { Header } from '../components/Header';
@@ -12,6 +12,29 @@ import type { Message, Session } from '../types';
 interface LastAttempt {
   sid: string;
   text: string;
+}
+
+// Токены сессий хранятся в localStorage: без них backend не отдаёт
+// историю и не принимает сообщения/заявки (защита от чужих session_id).
+const TOKEN_KEY = 'mts-session-tokens';
+
+function loadTokens(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(TOKEN_KEY) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function rememberToken(id: string, token?: string) {
+  if (!token) return;
+  const tokens = loadTokens();
+  tokens[id] = token;
+  localStorage.setItem(TOKEN_KEY, JSON.stringify(tokens));
+}
+
+function tokenFor(id: string | null | undefined): string | undefined {
+  return id ? loadTokens()[id] : undefined;
 }
 
 export function ChatPage() {
@@ -71,7 +94,7 @@ export function ChatPage() {
     setMessagesLoading(true);
     setError('');
     try {
-      const { messages: msgs } = await api.getMessages(sessionId);
+      const { messages: msgs } = await api.getMessages(sessionId, tokenFor(sessionId));
       if (requestId === messagesRequestRef.current && activeIdRef.current === sessionId) {
         setMessages(msgs);
       }
@@ -121,6 +144,7 @@ export function ChatPage() {
   const newDialog = useCallback(async () => {
     try {
       const session = await api.createSession();
+      rememberToken(session.id, session.token);
       setSessions((prev) => [{ ...session, message_count: 0 }, ...prev]);
       activeIdRef.current = session.id;
       setActiveId(session.id);
@@ -153,7 +177,7 @@ export function ChatPage() {
       }
 
       try {
-        const resp = await api.chat(sid, text);
+        const resp = await api.chat(sid, text, tokenFor(sid));
         if (activeIdRef.current === sid) {
           setMessages((prev) => [
             ...prev,
@@ -194,6 +218,7 @@ export function ChatPage() {
       if (!sid) {
         try {
           const session = await api.createSession();
+          rememberToken(session.id, session.token);
           setSessions((prev) => [{ ...session, message_count: 0 }, ...prev]);
           activeIdRef.current = session.id;
           setActiveId(session.id);
@@ -217,7 +242,10 @@ export function ChatPage() {
 
   const submitLead = useCallback(
     async (lead: { name: string; phone: string; company: string; session_id?: string }) => {
-      await api.createLead(lead);
+      await api.createLead({
+        ...lead,
+        session_token: lead.session_id ? tokenFor(lead.session_id) : undefined,
+      });
     },
     [],
   );
@@ -226,7 +254,7 @@ export function ChatPage() {
     if (!confirmDeleteId) return;
     setDeleting(true);
     try {
-      await api.deleteSession(confirmDeleteId);
+      await api.deleteSession(confirmDeleteId, tokenFor(confirmDeleteId));
       setSessions((prev) => prev.filter((s) => s.id !== confirmDeleteId));
       if (activeIdRef.current === confirmDeleteId) {
         activeIdRef.current = null;
@@ -247,6 +275,12 @@ export function ChatPage() {
 
   const showWelcome = !messagesLoading && messages.length === 0 && !sending;
   const dialogTitle = sessions.find((s) => s.id === activeId)?.title ?? 'Новый диалог';
+  const leadPreview = useMemo(() => {
+    const firstUser = messages.find((m) => m.role === 'user' && m.content.trim());
+    if (!firstUser) return 'Заявка на консультацию по решениям МТС EnergyTool';
+    const t = firstUser.content.trim();
+    return t.length > 160 ? `${t.slice(0, 157)}…` : t;
+  }, [messages]);
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
@@ -333,6 +367,8 @@ export function ChatPage() {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <LeadForm
               sessionId={activeId}
+              preview={leadPreview}
+              hasDialog={messages.length > 0}
               onSubmit={submitLead}
               onClose={() => setShowLeadModal(false)}
             />
