@@ -18,22 +18,63 @@ from typing import Any
 import kb_loader
 
 _TOKEN_RE = re.compile(r"[0-9a-zа-яё]+")
+_CYR_RE = re.compile(r"^[а-я]+$")
 
 # BM25 параметры (стандартные Okapi).
 K1 = 1.5
 B = 0.75
 
+# Частотные русские флексии для грубого стемминга (Retrieval V2,
+# подтверждено измерениями в scripts/eval_retrieval_variants*.py).
+# Применяется только к кириллическим словам >=5 букв; основа >=3 букв.
+_SUFFIXES = sorted(
+    [
+        "иями", "ями", "ами", "ого", "его", "ому", "ему", "ыми", "ими",
+        "иях", "ях", "ов", "ев", "ей", "ий", "ый", "ой", "ая", "яя",
+        "ое", "ее", "ые", "ие", "ам", "ям", "ах", "ом", "ем", "ую",
+        "юю", "ью", "а", "я", "о", "е", "ы", "и", "у", "ю", "ь", "й", "х",
+    ],
+    key=len,
+    reverse=True,
+)
+
+
+def _stem(word: str) -> str:
+    if len(word) < 5 or not _CYR_RE.match(word):
+        return word
+    for suf in _SUFFIXES:
+        if word.endswith(suf) and len(word) - len(suf) >= 3:
+            return word[: -len(suf)]
+    return word
+
+
+# Точечная нормализация семейства «сим-карта» (Retrieval V2):
+# дефисные формы («сим-картами», «SIM-карты») токенизатор резал на
+# «сим»+«картами», а разговорное «симки» стеммилось в «симк» —
+# термины не встречались. Склеиваем только это семейство в «симкарта»;
+# универсальных замен нет, чтобы не смешивать технические понятия.
+_RE_SIM_HYPH = re.compile(r"(?i)\b(?:сим|sim)[-\s]?карт\w*")
+_RE_SIM_COLLOQ = re.compile(r"(?i)\bсимк[а-яё]*")
+_RE_SIM_LATIN = re.compile(r"(?i)\bsim\b(?!\s*[-\s]?карт)")
+
+
+def _normalize_terms(text: str) -> str:
+    text = _RE_SIM_HYPH.sub(" симкарта ", text)
+    text = _RE_SIM_COLLOQ.sub(" симкарта ", text)
+    return _RE_SIM_LATIN.sub(" симкарта ", text)
+
 
 def _env_top_k() -> int:
     try:
-        return max(1, min(30, int(os.environ.get("TOP_K", "") or 5)))
+        return max(1, min(30, int(os.environ.get("TOP_K", "") or 8)))
     except ValueError:
-        return 5
+        return 8
 
 
 def tokenize(text: str) -> list[str]:
-    """Нормализация: lower, ё->е, слова из букв/цифр (ru+en)."""
-    return _TOKEN_RE.findall(text.lower().replace("ё", "е"))
+    """Нормализация V2: lower, ё->е, точечные синонимы, стемминг."""
+    text = _normalize_terms(text.lower().replace("ё", "е"))
+    return [_stem(t) for t in _TOKEN_RE.findall(text)]
 
 
 class BM25Index:
