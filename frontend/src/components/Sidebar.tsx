@@ -38,7 +38,7 @@ export function Sidebar({
       <div className="flex items-center justify-between border-b border-slate-200 p-4">
         <div>
           <div className="text-base font-bold text-slate-900">МТС EnergyTool</div>
-          <div className="text-xs text-slate-500">AI Consultant</div>
+          <div className="text-xs text-slate-500">ИИ-консультант</div>
         </div>
         <button
           onClick={onToggleCollapse}
