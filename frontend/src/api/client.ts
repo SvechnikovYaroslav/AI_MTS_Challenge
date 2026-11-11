@@ -18,6 +18,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new Error(detail);
   }
+  if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
 }
 
@@ -27,6 +28,7 @@ export const api = {
   listSessions: () => request<{ sessions: Session[] }>('GET', '/sessions'),
   getMessages: (sessionId: string) =>
     request<{ session_id: string; messages: Message[] }>('GET', `/sessions/${sessionId}/messages`),
+  deleteSession: (sessionId: string) => request<void>('DELETE', `/sessions/${sessionId}`),
   chat: (sessionId: string, message: string) =>
     request<ChatResponse>('POST', '/chat', { session_id: sessionId, message }),
   createLead: (lead: { name: string; phone: string; company: string; session_id?: string }) =>

@@ -145,3 +145,28 @@ def test_session_title_from_first_message(client):
     # Название сохраняется после «перезагрузки» (повторный запрос списка)
     sessions2 = client.get("/api/sessions").json()["sessions"]
     assert next(s["title"] for s in sessions2 if s["id"] == sid) == title
+
+
+def test_delete_session_removes_messages_keeps_lead(client):
+    sid = client.post("/api/sessions").json()["id"]
+    client.post("/api/chat", json={"session_id": sid, "message": "Тест на удаление"})
+    client.post(
+        "/api/leads",
+        json={"name": "Лид Лидов", "phone": "+7 000 222-33-44", "company": "KeepCo", "session_id": sid},
+    )
+
+    r = client.delete(f"/api/sessions/{sid}")
+    assert r.status_code == 204
+
+    # Сессия и сообщения удалены
+    assert client.get(f"/api/sessions/{sid}/messages").status_code == 404
+    ids = {s["id"] for s in client.get("/api/sessions").json()["sessions"]}
+    assert sid not in ids
+
+    # Заявка сохранена
+    leads = client.get("/api/leads").json()["leads"]
+    assert any(l["name"] == "Лид Лидов" and l["session_id"] == sid for l in leads)
+
+
+def test_delete_unknown_session_404(client):
+    assert client.delete("/api/sessions/does-not-exist").status_code == 404

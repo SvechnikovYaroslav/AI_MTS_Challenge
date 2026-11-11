@@ -26,6 +26,8 @@ export function ChatPage() {
   const [lastAttempt, setLastAttempt] = useState<LastAttempt | null>(null);
   const [suggestLead, setSuggestLead] = useState(false);
   const [showLeadModal, setShowLeadModal] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [showDebug, setShowDebug] = useState(() => localStorage.getItem('mts-show-debug') === '1');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
@@ -220,6 +222,29 @@ export function ChatPage() {
     [],
   );
 
+  const confirmDelete = useCallback(async () => {
+    if (!confirmDeleteId) return;
+    setDeleting(true);
+    try {
+      await api.deleteSession(confirmDeleteId);
+      setSessions((prev) => prev.filter((s) => s.id !== confirmDeleteId));
+      if (activeIdRef.current === confirmDeleteId) {
+        activeIdRef.current = null;
+        setActiveId(null);
+        setMessages([]);
+        setSuggestLead(false);
+        setShowLeadModal(false);
+        setLastAttempt(null);
+        setError('');
+      }
+      setConfirmDeleteId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось удалить диалог');
+    } finally {
+      setDeleting(false);
+    }
+  }, [confirmDeleteId]);
+
   const showWelcome = !messagesLoading && messages.length === 0 && !sending;
   const dialogTitle = sessions.find((s) => s.id === activeId)?.title ?? 'Новый диалог';
 
@@ -245,6 +270,7 @@ export function ChatPage() {
           mobileOpen={sidebarMobileOpen}
           onSelect={selectSession}
           onNew={newDialog}
+          onDeleteRequest={setConfirmDeleteId}
           onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onCloseMobile={() => setSidebarMobileOpen(false)}
         />
@@ -310,6 +336,34 @@ export function ChatPage() {
               onSubmit={submitLead}
               onClose={() => setShowLeadModal(false)}
             />
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <div className="text-base font-semibold text-slate-900">Удалить диалог?</div>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              «{sessions.find((s) => s.id === confirmDeleteId)?.title ?? 'Диалог'}» и все его
+              сообщения будут удалены безвозвратно. Заявки, если они есть, сохранятся.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? 'Удаление...' : 'Удалить'}
+              </button>
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                disabled={deleting}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-50"
+              >
+                Отмена
+              </button>
+            </div>
           </div>
         </div>
       )}

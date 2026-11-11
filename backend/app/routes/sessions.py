@@ -25,3 +25,9 @@ def get_messages(session_id: str) -> dict:
     if not storage.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session_id": session_id, "messages": storage.list_messages(session_id)}
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str) -> None:
+    if not storage.delete_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")

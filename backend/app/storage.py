@@ -90,6 +90,21 @@ def session_exists(session_id: str) -> bool:
     return row is not None
 
 
+def delete_session(session_id: str) -> bool:
+    """Удалить сессию вместе с сообщениями.
+
+    Заявки (leads) НЕ удаляются: session_id в них остаётся как историческая
+    ссылка на удалённый диалог.
+    """
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+        conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        return True
+
+
 # ---------- messages ----------
 
 def _derive_title(text: str) -> str:

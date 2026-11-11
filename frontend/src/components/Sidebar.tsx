@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Session } from '../types';
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
   mobileOpen: boolean;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDeleteRequest: (id: string) => void;
   onToggleCollapse: () => void;
   onCloseMobile: () => void;
 }
@@ -30,9 +32,11 @@ export function Sidebar({
   mobileOpen,
   onSelect,
   onNew,
+  onDeleteRequest,
   onToggleCollapse,
   onCloseMobile,
 }: Props) {
+  const [menu, setMenu] = useState<{ id: string; top: number; left: number } | null>(null);
   const content = (
     <div className="flex h-full flex-col bg-white">
       <div className="flex items-center justify-between border-b border-slate-200 p-4">
@@ -74,24 +78,44 @@ export function Sidebar({
         )}
         <div className="flex flex-col gap-1">
           {sessions.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                onSelect(s.id);
-                onCloseMobile();
-              }}
-              className={`rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                s.id === activeId
-                  ? 'bg-mts-light text-mts-red'
-                  : 'text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              <div className="truncate font-medium">{s.title}</div>
-              <div className="mt-0.5 flex items-center justify-between text-[11px] text-slate-400">
-                <span>{formatDate(s.created_at)}</span>
-                {typeof s.message_count === 'number' && <span>{s.message_count} сообщ.</span>}
-              </div>
-            </button>
+            <div key={s.id} className="group relative">
+              <button
+                onClick={() => {
+                  onSelect(s.id);
+                  onCloseMobile();
+                }}
+                className={`block w-full rounded-lg py-2 pl-3 pr-9 text-left text-sm transition-colors ${
+                  s.id === activeId
+                    ? 'bg-mts-light text-mts-red'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <div className="truncate font-medium">{s.title}</div>
+                <div className="mt-0.5 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>{formatDate(s.created_at)}</span>
+                  {typeof s.message_count === 'number' && <span>{s.message_count} сообщ.</span>}
+                </div>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setMenu({
+                    id: s.id,
+                    top: rect.bottom + 4,
+                    left: Math.max(8, rect.right - 176),
+                  });
+                }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 opacity-100 transition-opacity hover:bg-slate-200 hover:text-slate-600 md:opacity-0 md:group-hover:opacity-100"
+                aria-label="Действия с диалогом"
+              >
+                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="5" cy="12" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="19" cy="12" r="1.8" />
+                </svg>
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -139,6 +163,30 @@ export function Sidebar({
           <div className="absolute inset-0 bg-black/40" onClick={onCloseMobile} />
           <aside className="absolute left-0 top-0 h-full w-72 shadow-xl">{content}</aside>
         </div>
+      )}
+
+      {/* Выпадающее меню действий диалога (fixed — не обрезается скроллом) */}
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} />
+          <div
+            className="fixed z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+            style={{ top: menu.top, left: menu.left }}
+          >
+            <button
+              onClick={() => {
+                onDeleteRequest(menu.id);
+                setMenu(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" />
+              </svg>
+              Удалить диалог
+            </button>
+          </div>
+        </>
       )}
     </>
   );
