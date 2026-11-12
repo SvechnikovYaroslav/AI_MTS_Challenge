@@ -91,6 +91,9 @@ def chat(messages: list[dict[str, str]], budget: Budget,
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
+        # Cloudflare перед api.groq.com блокирует дефолтный
+        # Python-urllib UA (error 1010) — задаём свой.
+        "User-Agent": "EnergyTool-EvalLab/1.0 (+https://github.com/SvechnikovYaroslav/AI_MTS_Challenge)",
     }
 
     last_err = ""
