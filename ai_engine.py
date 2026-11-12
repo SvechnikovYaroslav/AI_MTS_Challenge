@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any
 
@@ -35,6 +36,55 @@ MAX_ANSWER_CHARS = 10_000  # лимит регламента на один от�
 
 class AICoreError(RuntimeError):
     """Инфраструктурная ошибка AI Core (сеть, API, пустой ответ модели)."""
+
+
+# Минимальная техническая телеметрия LLM (Preflight): только агрегированные
+# счётчики — без ключей, текстов вопросов, БЗ и reasoning_content.
+# Нужна для диагностики finish_reason=length / usage на прокси МТС.
+_LLM_STATS_LOCK = threading.Lock()
+_LLM_STATS = {
+    "requests": 0,          # успешных HTTP-ответов 200 с валидным JSON
+    "empty": 0,             # пустой content после 200
+    "finish_length": 0,     # ответов с finish_reason="length"
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "reasoning_tokens": 0,  # когда прокси возвращает details
+    "latency_ms": 0,
+}
+
+
+def llm_stats() -> dict[str, int]:
+    """Копия агрегированных счётчиков LLM для диагностики."""
+    with _LLM_STATS_LOCK:
+        return dict(_LLM_STATS)
+
+
+def reset_llm_stats() -> None:
+    """Сброс счётчиков (для тестов)."""
+    with _LLM_STATS_LOCK:
+        for k in _LLM_STATS:
+            _LLM_STATS[k] = 0
+
+
+def _record_llm_stats(data: dict[str, Any], latency_ms: int, empty: bool) -> None:
+    usage = data.get("usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    reasoning = details.get("reasoning_tokens") or usage.get("reasoning_tokens") or 0
+    finish = ""
+    try:
+        finish = str(data["choices"][0].get("finish_reason") or "")
+    except (KeyError, IndexError, TypeError):
+        pass
+    with _LLM_STATS_LOCK:
+        _LLM_STATS["requests"] += 1
+        _LLM_STATS["latency_ms"] += latency_ms
+        if empty:
+            _LLM_STATS["empty"] += 1
+        if finish == "length":
+            _LLM_STATS["finish_length"] += 1
+        _LLM_STATS["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+        _LLM_STATS["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+        _LLM_STATS["reasoning_tokens"] += int(reasoning or 0)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -102,6 +152,7 @@ def _post_chat(messages: list[dict[str, str]], settings: dict[str, Any]) -> str:
 
     last_exc: Exception | None = None
     for attempt in range(settings["retries"] + 1):
+        t0 = time.perf_counter()
         try:
             with httpx.Client(timeout=settings["timeout"]) as client:
                 resp = client.post(url, headers=headers, json=payload)
@@ -114,7 +165,9 @@ def _post_chat(messages: list[dict[str, str]], settings: dict[str, Any]) -> str:
             except ValueError as exc:
                 raise AICoreError(f"LLM вернул невалидный JSON: {exc}") from exc
             content = data["choices"][0]["message"].get("content") or ""
-            if not isinstance(content, str) or not content.strip():
+            empty = not isinstance(content, str) or not content.strip()
+            _record_llm_stats(data, int((time.perf_counter() - t0) * 1000), empty)
+            if empty:
                 raise AICoreError("LLM вернула пустой ответ")
             return content.strip()
         except _RetryableHTTP as exc:
