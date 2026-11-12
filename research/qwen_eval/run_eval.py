@@ -73,15 +73,30 @@ def cmd_run(args) -> int:
         print("Fix cases first:", errors)
         return 1
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    out_path = DATA_DIR / f"run_{ts}.jsonl"
+    resume_path = Path(args.resume) if args.resume else None
+    done_pairs: set[tuple[str, str]] = set()
+    if resume_path and resume_path.exists():
+        for line in resume_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if "answer" in r:
+                done_pairs.add((r["case_id"], r["mode"]))
+        ts = json.loads(resume_path.read_text(encoding="utf-8").splitlines()[0])["run_id"]
+        out_path = resume_path
+        print(f"resuming {out_path}: {len(done_pairs)} pairs already answered")
+    else:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_path = DATA_DIR / f"run_{ts}.jsonl"
     budget = groq_client.Budget(max_requests=args.max_requests)
     done = skipped = 0
 
-    with out_path.open("w", encoding="utf-8") as f:
+    with out_path.open("a", encoding="utf-8") as f:
         for case in cases_mod.CASES:
             context_text = synth_kb.format_context(case["context_ids"])
             for mode in ("A", "B"):
+                if (case["case_id"], mode) in done_pairs:
+                    continue
                 messages = prompts_eval.build_messages(
                     prompts_eval.mode_system(mode), case["question"], context_text)
                 record = {
@@ -183,6 +198,8 @@ def main() -> int:
     p_run = sub.add_parser("run")
     p_run.add_argument("--max-requests", type=int, default=45)
     p_run.add_argument("--delay", type=float, default=0.5)
+    p_run.add_argument("--resume", default=None,
+                       help="JSONL прошлого прогона: пропустить уже отвеченные пары")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--run", default=None)
     args = ap.parse_args()

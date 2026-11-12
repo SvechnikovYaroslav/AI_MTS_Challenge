@@ -110,7 +110,9 @@ def chat(messages: list[dict[str, str]], budget: Budget,
             raw = exc.read() or b""
             last_err = f"HTTP {status}: {raw[:200]!r}"
             if status in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
-                time.sleep(RETRY_BACKOFF_S * (attempt + 1))
+                # 429 на OTPM — окно лимита поминутное, ждём до конца окна.
+                wait = 65.0 if status == 429 else RETRY_BACKOFF_S * (attempt + 1)
+                time.sleep(wait)
                 continue
             raise RuntimeError(last_err) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
