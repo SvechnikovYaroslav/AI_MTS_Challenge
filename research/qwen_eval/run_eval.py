@@ -79,7 +79,7 @@ def cmd_run(args) -> int:
         print("Fix cases first:", errors)
         return 1
     case_list = cases_h5.H5_CASES if args.case_set == "h5" else cases_mod.CASES
-    modes = list(args.modes)
+    modes = [m for m in args.modes.split(",") if m]
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     resume_path = Path(args.resume) if args.resume else None
     done_pairs: set[tuple[str, str]] = set()
@@ -190,9 +190,10 @@ def cmd_recheck(args) -> int:
 
     old_agg = {m: evaluate.aggregate([r["eval"] for r in records
                                     if r.get("mode") == m and "eval" in r])
-               for m in ("A", "B")}
+               for m in sorted({r.get("mode") for r in records})}
+    modes = sorted({r["mode"] for r in rows})
     new_agg = {}
-    for m in ("A", "B"):
+    for m in modes:
         rs = [r for r in rows if r["mode"] == m]
         new_agg[m] = {
             "n": len(rs),
@@ -306,7 +307,7 @@ def main() -> int:
                        help="JSONL прошлого прогона: пропустить уже отвеченные пары")
     p_run.add_argument("--case-set", choices=["main", "h5"], default="main")
     p_run.add_argument("--modes", default="AB",
-                       help="последовательность режимов, напр. AB или AH5")
+                       help="режимы через запятую, напр. AB или A,H5")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--run", default=None)
     p_rec = sub.add_parser("recheck")

@@ -124,7 +124,7 @@ def test_capability_denial_flag():
 
 def test_h5_cases_valid():
     assert cases_h5.validate_h5() == []
-    assert len(cases_h5.H5_CASES) == 8
+    assert len(cases_h5.H5_CASES) == 12
 
 
 def test_h5_prompt_is_a_plus_rule():

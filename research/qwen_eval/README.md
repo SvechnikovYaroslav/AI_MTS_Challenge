@@ -55,7 +55,7 @@ research/qwen_eval/
 .\backend\.venv\Scripts\python.exe research\qwen_eval\run_eval.py recheck
 
 # 6. H5-эксперимент (holdout, 8 кейсов × A/H5 = 16 запросов) — вручную:
-.\backend\.venv\Scripts\python.exe research\qwen_eval\run_eval.py run --case-set h5 --modes AH5 --max-requests 20 --delay 10
+.\backend\.venv\Scripts\python.exe research\qwen_eval\run_eval.py run --case-set h5 --modes A,H5 --max-requests 20 --delay 10
 ```
 
 `run` последовательно вызывает модель; лимит запросов
