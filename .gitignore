@@ -42,3 +42,9 @@ frontend/.vite/
 Thumbs.db
 *.tsbuildinfo
 Отправки/
+
+# Groq Eval Lab: локальные ключи и данные прогонов
+research/qwen_eval/.env
+research/qwen_eval/data/
+research/qwen_eval/reports/
+research/qwen_eval/__pycache__/
