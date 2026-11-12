@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import cases as cases_mod  # noqa: E402
+import cases_h5  # noqa: E402
 import evaluate  # noqa: E402
 import groq_client  # noqa: E402
 import prompts_eval  # noqa: E402
@@ -39,12 +40,13 @@ REPORTS_DIR = HERE / "reports"
 
 
 def cmd_check() -> int:
-    errors = cases_mod.validate_cases()
+    errors = cases_mod.validate_cases() + cases_h5.validate_h5()
     if errors:
         for e in errors:
             print("ERROR:", e)
         return 1
-    print(f"OK: {len(cases_mod.CASES)} cases, {len(synth_kb.CHUNKS)} synthetic chunks")
+    print(f"OK: {len(cases_mod.CASES)} main + {len(cases_h5.H5_CASES)} h5 cases, "
+          f"{len(synth_kb.CHUNKS)} synthetic chunks")
     return 0
 
 
@@ -67,11 +69,17 @@ def cmd_smoke() -> int:
     return 0
 
 
+def all_cases() -> list[dict]:
+    return list(cases_mod.CASES) + list(cases_h5.H5_CASES)
+
+
 def cmd_run(args) -> int:
-    errors = cases_mod.validate_cases()
+    errors = cases_mod.validate_cases() + cases_h5.validate_h5()
     if errors:
         print("Fix cases first:", errors)
         return 1
+    case_list = cases_h5.H5_CASES if args.case_set == "h5" else cases_mod.CASES
+    modes = list(args.modes)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     resume_path = Path(args.resume) if args.resume else None
     done_pairs: set[tuple[str, str]] = set()
@@ -92,9 +100,9 @@ def cmd_run(args) -> int:
     done = skipped = 0
 
     with out_path.open("a", encoding="utf-8") as f:
-        for case in cases_mod.CASES:
+        for case in case_list:
             context_text = synth_kb.format_context(case["context_ids"])
-            for mode in ("A", "B"):
+            for mode in modes:
                 if (case["case_id"], mode) in done_pairs:
                     continue
                 messages = prompts_eval.build_messages(
@@ -129,6 +137,102 @@ def cmd_run(args) -> int:
 
     print(f"done: {done} calls, {skipped} errors -> {out_path}")
     return 0
+
+
+def cmd_recheck(args) -> int:
+    """Офлайн-переоценка сохранённых ответов evaluator v2 + manual labels."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    runs = sorted(DATA_DIR.glob("run_*.jsonl"))
+    if not runs:
+        print("no run_*.jsonl in data/")
+        return 1
+    run_path = Path(args.run) if args.run else runs[-1]
+    records = [json.loads(l) for l in run_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    answers = {(r["case_id"], r["mode"]): r for r in records if "answer" in r}
+    case_by_id = {c["case_id"]: c for c in all_cases()}
+
+    labels_path = HERE / "manual_labels.json"
+    manual = {}
+    if labels_path.exists():
+        manual = json.loads(labels_path.read_text(encoding="utf-8")).get("labels", {})
+
+    rows = []
+    for (cid, mode), r in sorted(answers.items()):
+        case = case_by_id[cid]
+        ctx = synth_kb.format_context(case["context_ids"])
+        meta = {"finish_reason": r.get("meta", {}).get("finish_reason"),
+                "usage": r.get("meta", {}).get("usage"),
+                "latency_ms": r.get("meta", {}).get("latency_ms")}
+        v2 = evaluate.verdict_v2(case, r["answer"], meta, ctx)
+        key = f"{cid}|{mode}"
+        man = manual.get(key, {})
+        rows.append({
+            "case_id": cid, "mode": mode, "category": case["category"],
+            "auto_verdict": v2["verdict"],
+            "manual_verdict": man.get("verdict"),
+            "manual_note": man.get("note", ""),
+            "final_verdict": man.get("verdict") or v2["verdict"],
+            "missing_facts": v2["missing_facts"],
+            "forbidden_hits": v2["forbidden_hits"],
+            "unit_equiv_suspect": v2["unit_equiv_suspect"],
+            "currency_invention": v2["currency_invention"],
+            "old_missing_facts": (r.get("eval") or {}).get("missing_facts"),
+            "old_forbidden": (r.get("eval") or {}).get("forbidden_hits"),
+            "old_manual_flag": (r.get("eval") or {}).get("needs_manual_review"),
+            "question": r["question"], "answer": r["answer"],
+        })
+
+    def tally(field):
+        out = {}
+        for r in rows:
+            out[r[field]] = out.get(r[field], 0) + 1
+        return out
+
+    old_agg = {m: evaluate.aggregate([r["eval"] for r in records
+                                    if r.get("mode") == m and "eval" in r])
+               for m in ("A", "B")}
+    new_agg = {}
+    for m in ("A", "B"):
+        rs = [r for r in rows if r["mode"] == m]
+        new_agg[m] = {
+            "n": len(rs),
+            "auto_verdicts": tally_mode(rs, "auto_verdict"),
+            "manual_verdicts": tally_mode(rs, "manual_verdict"),
+            "final_verdicts": tally_mode(rs, "final_verdict"),
+            "auto_flagged": sum(1 for r in rs if r["auto_verdict"] != "correct"),
+            "unit_equiv_suspects": sum(1 for r in rs if r["unit_equiv_suspect"]),
+        }
+
+    out_md = REPORTS_DIR / f"audit2_{run_path.stem}.md"
+    with out_md.open("w", encoding="utf-8") as f:
+        f.write(f"# Evaluation Audit 2 — {run_path.stem}\n\n")
+        f.write("Автоматические метрики v2 + ручная разметка.\n\n")
+        f.write("## Old evaluator aggregates (stored eval)\n\n```json\n"
+                + json.dumps(old_agg, ensure_ascii=False, indent=2) + "\n```\n\n")
+        f.write("## New verdicts\n\n```json\n"
+                + json.dumps(new_agg, ensure_ascii=False, indent=2) + "\n```\n\n")
+        f.write("## Per-case: old flags vs new auto vs manual\n\n")
+        f.write("| case | mode | old_missing | old_forbidden | auto_v2 | manual | final | note |\n")
+        f.write("|---|---|---|---|---|---|---|---|\n")
+        for r in rows:
+            f.write(f"| {r['case_id']} | {r['mode']} | {r['old_missing_facts']} | "
+                    f"{','.join(r['old_forbidden']) if r['old_forbidden'] else '-'} | "
+                    f"{r['auto_verdict']} | {r['manual_verdict'] or '-'} | {r['final_verdict']} | "
+                    f"{r['manual_note'][:90]} |\n")
+        f.write("\n## Answers\n\n")
+        for r in rows:
+            f.write(f"### {r['case_id']} [{r['mode']}] — final={r['final_verdict']}\n\n")
+            f.write(f"**Q:** {r['question']}\n\n**A:**\n\n{r['answer']}\n\n---\n\n")
+    print(f"audit -> {out_md}")
+    print(json.dumps(new_agg, ensure_ascii=False, indent=2))
+    return 0
+
+
+def tally_mode(rows: list[dict], field: str) -> dict:
+    out = {}
+    for r in rows:
+        out[r[field]] = out.get(r[field], 0) + 1
+    return out
 
 
 def cmd_report(args) -> int:
@@ -200,11 +304,18 @@ def main() -> int:
     p_run.add_argument("--delay", type=float, default=0.5)
     p_run.add_argument("--resume", default=None,
                        help="JSONL прошлого прогона: пропустить уже отвеченные пары")
+    p_run.add_argument("--case-set", choices=["main", "h5"], default="main")
+    p_run.add_argument("--modes", default="AB",
+                       help="последовательность режимов, напр. AB или AH5")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--run", default=None)
+    p_rec = sub.add_parser("recheck")
+    p_rec.add_argument("--run", default=None)
     args = ap.parse_args()
-    return {"check": cmd_check, "smoke": cmd_smoke,
-            "run": cmd_run, "report": cmd_report}[args.cmd](args) if args.cmd != "check" and args.cmd != "smoke" else {"check": cmd_check, "smoke": cmd_smoke}[args.cmd]()
+    if args.cmd in ("check", "smoke"):
+        return {"check": cmd_check, "smoke": cmd_smoke}[args.cmd]()
+    return {"run": cmd_run, "report": cmd_report,
+            "recheck": cmd_recheck}[args.cmd](args)
 
 
 if __name__ == "__main__":

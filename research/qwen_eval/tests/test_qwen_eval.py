@@ -10,6 +10,7 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 
 import cases  # noqa: E402
+import cases_h5  # noqa: E402
 import evaluate  # noqa: E402
 import groq_client  # noqa: E402
 import prompts_eval  # noqa: E402
@@ -85,6 +86,57 @@ def test_no_network_on_import():
     import run_eval  # noqa: F401  (тяжёлый CLI-модуль тоже импортируется)
     for m in ("groq_client", "run_eval", "evaluate", "cases", "synth_kb", "prompts_eval"):
         importlib.reload(sys.modules[m])
+
+
+def test_forbidden_negation_aware():
+    # «не могу предоставить прогноз» — отказ, не запрещённое утверждение
+    hits = evaluate.check_forbidden(
+        "Я не могу предоставить прогноз погоды.", ["прогноз"])
+    assert hits == []
+    # а прямое утверждение — запрещено
+    hits2 = evaluate.check_forbidden("Прогноз: солнечно, +20 градусов.", ["прогноз"])
+    assert hits2 == ["прогноз"]
+
+
+def test_unit_equivalence_flags_apartments():
+    ans = ("Подходит: лимит 500 тепловых приборов покрывает "
+           "ваши 300 квартир.")
+    q = "Нам нужен учёт для котельной на 300 квартир."
+    r = evaluate.check_unit_equivalence(ans, q)
+    assert r["suspect"] is True
+    # вопрос про приборы — не флаг
+    r2 = evaluate.check_unit_equivalence(
+        "Лимит 500 приборов покрывает ваши 300 приборов.",
+        "У нас 300 приборов.")
+    assert r2["suspect"] is False
+
+
+def test_capability_denial_flag():
+    case = next(c for c in cases.CASES if c["case_id"] == "c10-vector-ai")
+    bad = "Нет, Вектор-А не предсказывает аварии."
+    v = evaluate.verdict_v2(case, bad, {"finish_reason": "stop"}, "ctx")
+    assert v["capability_denial"] is True
+    assert v["verdict"] == "needs_manual_review"
+    good = "В базе знаний нет данных о прогнозировании аварий."
+    v2 = evaluate.verdict_v2(case, good, {"finish_reason": "stop"}, "ctx")
+    assert v2["capability_denial"] is False
+
+
+def test_h5_cases_valid():
+    assert cases_h5.validate_h5() == []
+    assert len(cases_h5.H5_CASES) == 8
+
+
+def test_h5_prompt_is_a_plus_rule():
+    assert prompts_eval.SYSTEM_H5.startswith(prompts_eval.SYSTEM_A)
+    assert "не приравнивай" in prompts_eval.SYSTEM_H5.lower()
+
+
+def test_verdict_v2_labels():
+    case = cases.CASES[0]
+    v = evaluate.verdict_v2(case, "Сначала проверка совместимости, протокол МЭК 62056-21.",
+                            {"finish_reason": "stop"}, "ctx")
+    assert v["verdict"] == "correct"
 
 
 def test_last_reply_check():

@@ -44,9 +44,21 @@ def build_messages(system: str, question: str, context_text: str) -> list[dict]:
     ]
 
 
+# H5: baseline A + единственное добавление — запрет необоснованных
+# выводов из неполных данных (эксперимент на holdout cases_h5).
+SYSTEM_H5 = SYSTEM_A + """
+- Не приравнивай различные единицы измерения, объекты и характеристики
+  без основания в базе знаний. Если вывод зависит от неизвестного
+  параметра — укажи это и задай необходимый уточняющий вопрос.
+- Не представляй отсутствие информации о функции как доказательство
+  её отсутствия."""
+
+
 def mode_system(mode: str) -> str:
     if mode == "A":
         return SYSTEM_A
     if mode == "B":
         return SYSTEM_B
-    raise ValueError(f"unknown mode {mode!r}; expected 'A' or 'B'")
+    if mode == "H5":
+        return SYSTEM_H5
+    raise ValueError(f"unknown mode {mode!r}; expected 'A', 'B' or 'H5'")
