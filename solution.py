@@ -102,6 +102,14 @@ def _answer_one(question: str) -> tuple[str, str | None]:
 
 def main() -> int:
     started = time.perf_counter()
+
+    # Фиксируем TOP_K конкурсного эксперимента (Retrieval V2): платформа
+    # может содержать собственные env — не даём им молча вернуть TOP_K=5.
+    # MAX_TOKENS/TEMPERATURE НЕ пиним: генератор читает их из env с
+    # дефолтами ai_engine — как в лучшей отправке (score 0.4533).
+    # На веб-приложение не влияет: solution.py не импортируется backend'ом.
+    os.environ["TOP_K"] = "8"
+
     qpath = questions_csv_path()
     if not qpath.exists():
         print(
@@ -163,10 +171,11 @@ def main() -> int:
     elapsed = time.perf_counter() - started
     total = len(questions)
     ok = total - failures
+    llm = ai_engine.llm_stats()
     print(
         f"STATS total={total} ok={ok} failures={failures} "
         f"error_kinds={dict(error_kinds)} elapsed={elapsed:.1f}s "
-        f"workers={workers} -> {out_path}",
+        f"workers={workers} llm={llm} -> {out_path}",
         file=sys.stderr,
     )
 
