@@ -103,13 +103,12 @@ def _answer_one(question: str) -> tuple[str, str | None]:
 def main() -> int:
     started = time.perf_counter()
 
-    # Фиксируем конфигурацию конкурсного эксперимента (Retrieval V2):
-    # платформа может содержать собственные env — не даём им молча
-    # переопределить TOP_K/MAX_TOKENS/TEMPERATURE. На веб-приложение
-    # не влияет: solution.py не импортируется backend'ом.
+    # Фиксируем TOP_K конкурсного эксперимента (Retrieval V2): платформа
+    # может содержать собственные env — не даём им молча вернуть TOP_K=5.
+    # MAX_TOKENS/TEMPERATURE НЕ пиним: генератор читает их из env с
+    # дефолтами ai_engine — как в лучшей отправке (score 0.4533).
+    # На веб-приложение не влияет: solution.py не импортируется backend'ом.
     os.environ["TOP_K"] = "8"
-    os.environ["MAX_TOKENS"] = "1200"
-    os.environ["TEMPERATURE"] = "0.0"
 
     qpath = questions_csv_path()
     if not qpath.exists():

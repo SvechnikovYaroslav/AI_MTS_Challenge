@@ -443,15 +443,88 @@ def test_llm_stats_missing_usage_and_extra_fields(llm_server):
     assert st["finish_length"] == 0 and st["empty"] == 0
 
 
-def test_solution_pins_contest_config(tmp_path, monkeypatch):
-    """solution.main фиксирует TOP_K=8/MAX_TOKENS=1200/TEMPERATURE=0.0."""
+def test_solution_pins_only_top_k(tmp_path, monkeypatch):
+    """solution.main фиксирует TOP_K=8, но НЕ трогает MAX_TOKENS/TEMPERATURE."""
     import solution as sol
     monkeypatch.setenv("TOP_K", "5")
     monkeypatch.setenv("MAX_TOKENS", "999")
     monkeypatch.setenv("TEMPERATURE", "1.5")
-    # main() вернёт 2 (нет questions.csv) — но пины env уже выставлены.
+    # main() вернёт 2 (нет questions.csv) — но env уже обработан.
     monkeypatch.setattr(sol, "questions_csv_path", lambda: tmp_path / "nope.csv")
     assert sol.main() == 2
     assert os.environ["TOP_K"] == "8"
-    assert os.environ["MAX_TOKENS"] == "1200"
-    assert os.environ["TEMPERATURE"] == "0.0"
+    # MAX_TOKENS/TEMPERATURE остаются как задала платформа —
+    # как в лучшей отправке (score 0.4533).
+    assert os.environ["MAX_TOKENS"] == "999"
+    assert os.environ["TEMPERATURE"] == "1.5"
+
+
+def _make_rich_data_dir(tmp_path: Path) -> Path:
+    """БЗ с 8 разделами -> >=8 чанков, чтобы TOP_K был различим."""
+    data = tmp_path / "data"
+    data.mkdir()
+    with zipfile.ZipFile(data / "knowledge-base.zip", "w") as zf:
+        body = "\n\n".join(
+            f"## Раздел {i}\n\nФакт номер {i} про ASKUE и учёт электроэнергии. " * 5
+            for i in range(8)
+        )
+        zf.writestr("20-products/22-askue.md", "# ASKUE\n\n" + body)
+    with (data / "questions.csv").open("w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "question"])
+        w.writerow(["1", "ASKUE учёт электроэнергии"])
+    return data
+
+
+def _run_and_capture(tmp_path, llm_server, env_extra):
+    """Прогон solution.py с mock-LLM; возвращает (proc, list тел запросов)."""
+    bodies = []
+
+    def responder(body):
+        bodies.append(body)
+        return _ok_response("ok")
+
+    url = llm_server(responder)
+    work = _make_submission_dir(tmp_path)
+    data = _make_rich_data_dir(tmp_path)
+    out = tmp_path / "submission.csv"
+    env = {
+        "LLM_BASE_URL": url, "LLM_API_KEY": "t", "LLM_MODEL": "m",
+        "LLM_RETRIES": "0",
+        "MAX_TOKENS": "", "TEMPERATURE": "", "TOP_K": "",
+    }
+    env.update(env_extra or {})
+    proc = _run_solution(work, data, out, env_extra=env)
+    return proc, bodies
+
+
+def test_payload_defaults_match_best_zip(tmp_path, llm_server):
+    """A: без MAX_TOKENS/TEMPERATURE — дефолты ai_engine (как ZIP 45.331)."""
+    proc, bodies = _run_and_capture(tmp_path, llm_server, {})
+    assert proc.returncode == 0 and bodies
+    for b in bodies:
+        assert b["max_tokens"] == 1200
+        assert b["temperature"] == 0.0
+
+
+def test_payload_uses_platform_values(tmp_path, llm_server):
+    """B: платформа задаёт MAX_TOKENS/TEMPERATURE — они НЕ перезаписываются."""
+    proc, bodies = _run_and_capture(
+        tmp_path, llm_server,
+        {"MAX_TOKENS": "777", "TEMPERATURE": "0.9"},
+    )
+    assert proc.returncode == 0 and bodies
+    for b in bodies:
+        assert b["max_tokens"] == 777
+        assert b["temperature"] == 0.9
+
+
+def test_platform_top_k5_still_uses_v2(tmp_path, llm_server):
+    """C: платформа ставит TOP_K=5 — конкурсный прогон всё равно V2 (8 чанков)."""
+    import re
+    proc, bodies = _run_and_capture(tmp_path, llm_server, {"TOP_K": "5"})
+    assert proc.returncode == 0 and bodies
+    for b in bodies:
+        user = b["messages"][1]["content"]
+        n_frag = len(re.findall(r"(?m)^\[\d+\] ", user))
+        assert n_frag == 8, f"expected 8 fragments, got {n_frag}"
